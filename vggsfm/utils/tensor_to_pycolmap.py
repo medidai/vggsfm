@@ -72,7 +72,7 @@ def batch_matrix_to_pycolmap(
     num_points3D = len(valid_idx)
 
     camera = None
-    # frame idx
+    # Shift frame indices by +1
     for fidx in range(N):
         # set camera
         if camera is None or (not shared_camera):
@@ -103,7 +103,7 @@ def batch_matrix_to_pycolmap(
                 width=image_size[0],
                 height=image_size[1],
                 params=pycolmap_intri,
-                camera_id=fidx,
+                camera_id=fidx + 1,
             )
 
             # add camera
@@ -115,8 +115,8 @@ def batch_matrix_to_pycolmap(
             extrinsics[fidx][:3, 3],
         )  # Rot and Trans
         image = pycolmap.Image(
-            id=fidx,
-            name=f"image_{fidx}",
+            id=fidx + 1,
+            name=f"image_{fidx + 1}",
             camera_id=camera.camera_id,
             cam_from_world=cam_from_world,
         )
@@ -124,7 +124,7 @@ def batch_matrix_to_pycolmap(
         points2D_list = []
 
         point2D_idx = 0
-        # NOTE point3D_id start by 1
+        # Shift point3D indices by +1 when creating Point2D objects
         for point3D_id in range(1, num_points3D + 1):
             original_track_idx = valid_idx[point3D_id - 1]
 
@@ -142,7 +142,7 @@ def batch_matrix_to_pycolmap(
 
                     # add element
                     track = reconstruction.points3D[point3D_id].track
-                    track.add_element(fidx, point2D_idx)
+                    track.add_element(fidx + 1, point2D_idx)
                     point2D_idx += 1
 
         assert point2D_idx == len(points2D_list)
@@ -165,6 +165,7 @@ def pycolmap_to_batch_matrix(
 ):
     """
     Convert a PyCOLMAP Reconstruction Object to batched PyTorch tensors.
+    Handles 1-based COLMAP indices by subtracting 1 when converting back to tensors.
 
     Args:
         reconstruction (pycolmap.Reconstruction): The reconstruction object from PyCOLMAP.
@@ -179,23 +180,23 @@ def pycolmap_to_batch_matrix(
     max_points3D_id = max(reconstruction.point3D_ids())
     points3D = np.zeros((max_points3D_id, 3))
 
+    # Subtract 1 from point3D_id when storing in array since COLMAP uses 1-based indexing
     for point3D_id in reconstruction.points3D:
         points3D[point3D_id - 1] = reconstruction.points3D[point3D_id].xyz
     points3D = torch.from_numpy(points3D).to(device)
 
     extrinsics = []
     intrinsics = []
-
     extra_params = [] if camera_type == "SIMPLE_RADIAL" else None
 
+    # Images are also 1-based in COLMAP, so we need to handle that
     for i in range(num_images):
-        # Extract and append extrinsics
-        pyimg = reconstruction.images[i]
+        # Get image with ID i+1 since COLMAP uses 1-based indexing
+        pyimg = reconstruction.images[i + 1]
         pycam = reconstruction.cameras[pyimg.camera_id]
         matrix = pyimg.cam_from_world.matrix()
         extrinsics.append(matrix)
 
-        # Extract and append intrinsics
         calibration_matrix = pycam.calibration_matrix()
         intrinsics.append(calibration_matrix)
 
@@ -204,7 +205,6 @@ def pycolmap_to_batch_matrix(
 
     # Convert lists to torch tensors
     extrinsics = torch.from_numpy(np.stack(extrinsics)).to(device)
-
     intrinsics = torch.from_numpy(np.stack(intrinsics)).to(device)
 
     if camera_type == "SIMPLE_RADIAL":
